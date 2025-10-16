@@ -460,6 +460,46 @@ def main(args):
             "Mixed precision training with bfloat16 is not supported on MPS. Please use fp16 (recommended) or fp32 instead."
         )
 
+    # # Move models to device - check if parameters are on meta device
+    # def materialize_meta_tensors(module):
+    #     """Materialize all meta tensors to CPU
+
+    #     When using torch_dtype in from_pretrained(), HuggingFace creates the model
+    #     on meta device first, then loads weights. New parameters (like transformer_blocks_copy)
+    #     without pretrained weights will remain on meta device.
+
+    #     We must materialize meta tensors to CPU first, then use regular .to() to move to GPU.
+    #     Using to_empty() would CLEAR all weights, including pretrained ones!
+    #     """
+    #     for name, param in list(module.named_parameters(recurse=False)):
+    #         if param.device.type == 'meta':
+    #             # Create a CPU tensor to replace the meta tensor
+    #             new_param = torch.nn.Parameter(
+    #                 torch.empty_like(param, device='cpu'),
+    #                 requires_grad=param.requires_grad
+    #             )
+    #             setattr(module, name, new_param)
+
+    #     for name, buffer in list(module.named_buffers(recurse=False)):
+    #         if buffer.device.type == 'meta':
+    #             new_buffer = torch.empty_like(buffer, device='cpu')
+    #             module.register_buffer(name, new_buffer)
+
+    #     # Recursively process child modules
+    #     for child in module.children():
+    #         materialize_meta_tensors(child)
+
+    # def safe_model_to_device(model, device, dtype):
+    #     """Safely move model to device, handling meta tensors properly"""
+    #     # First materialize any meta tensors to CPU
+    #     materialize_meta_tensors(model)
+    #     # Then use regular .to() which preserves all weights
+    #     model = model.to(device, dtype=dtype)
+    #     return model
+
+    # text_encoder = safe_model_to_device(text_encoder, accelerator.device, weight_dtype)
+    # transformer = safe_model_to_device(transformer, accelerator.device, weight_dtype)
+    # vae = safe_model_to_device(vae, accelerator.device, weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     transformer.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
@@ -777,23 +817,21 @@ def main(args):
         transformer.eval()
 
         if args.tracking_column is None:
-            pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
+            pipe = CogVideoXImageToVideoPipeline(
+                tokenizer=tokenizer,
+                text_encoder=text_encoder,
+                vae=vae,
                 transformer=unwrap_model(transformer),
                 scheduler=scheduler,
-                revision=args.revision,
-                variant=args.variant,
-                torch_dtype=weight_dtype,
-            )
+            ).to(torch_dtype=weight_dtype)
         else:
-            pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
-                args.pretrained_model_name_or_path,
+            pipe = CogVideoXImageToVideoPipelineTracking(
+                tokenizer=tokenizer,
+                text_encoder=text_encoder,
+                vae=vae,
                 transformer=unwrap_model(transformer),
                 scheduler=scheduler,
-                revision=args.revision,
-                variant=args.variant,
-                torch_dtype=weight_dtype,
-            )
+            ).to(torch_dtype=weight_dtype)
 
         if args.enable_slicing:
             pipe.vae.enable_slicing()
@@ -1065,23 +1103,21 @@ def main(args):
                 transformer.eval()
 
                 if args.tracking_column is None:
-                    pipe = CogVideoXImageToVideoPipeline.from_pretrained(
-                        args.pretrained_model_name_or_path,
+                    pipe = CogVideoXImageToVideoPipeline(
+                        tokenizer=tokenizer,
+                        text_encoder=text_encoder,
+                        vae=vae,
                         transformer=unwrap_model(transformer),
                         scheduler=scheduler,
-                        revision=args.revision,
-                        variant=args.variant,
-                        torch_dtype=weight_dtype,
-                    )
+                    ).to(torch_dtype=weight_dtype)
                 else:
-                    pipe = CogVideoXImageToVideoPipelineTracking.from_pretrained(
-                        args.pretrained_model_name_or_path,
+                    pipe = CogVideoXImageToVideoPipelineTracking(
+                        tokenizer=tokenizer,
+                        text_encoder=text_encoder,
+                        vae=vae,
                         transformer=unwrap_model(transformer),
                         scheduler=scheduler,
-                        revision=args.revision,
-                        variant=args.variant,
-                        torch_dtype=weight_dtype,
-                    )
+                    ).to(torch_dtype=weight_dtype)
 
                 if args.enable_slicing:
                     pipe.vae.enable_slicing()

@@ -121,6 +121,7 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel, ModelMixi
                     norm_elementwise_affine=self.config.norm_elementwise_affine,
                     norm_eps=self.config.norm_eps,
                 ).to_empty(device="cpu")
+                # ).to_empty(device="cpu")  # Use to_empty to avoid allocating memory on GPU
                 for _ in range(num_tracking_blocks)
             ]
         )
@@ -284,29 +285,48 @@ class CogVideoXTransformer3DModelTracking(CogVideoXTransformer3DModel, ModelMixi
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], **kwargs):
-        try:
-            model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
-            print("Loaded DiffusionAsShader checkpoint directly.")
-            
-            for param in model.parameters():
-                param.requires_grad = False
-            
-            for linear in model.combine_linears:
-                for param in linear.parameters():
+        # Check if this is a DaS checkpoint by looking at the config
+        import json
+        config_path = os.path.join(pretrained_model_name_or_path, "transformer", "config.json")
+        is_das_checkpoint = False
+
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+                # Check if config has DaS-specific fields
+                is_das_checkpoint = (
+                    "_class_name" in config and
+                    config["_class_name"] == "CogVideoXTransformer3DModelTracking" and
+                    "num_tracking_blocks" in config
+                )
+
+        if is_das_checkpoint:
+            # This is a DaS checkpoint - load directly
+            try:
+                model = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
+                print("Loaded DiffusionAsShader checkpoint directly.")
+
+                for param in model.parameters():
+                    param.requires_grad = False
+
+                for linear in model.combine_linears:
+                    for param in linear.parameters():
+                        param.requires_grad = True
+
+                for block in model.transformer_blocks_copy:
+                    for param in block.parameters():
+                        param.requires_grad = True
+
+                for param in model.initial_combine_linear.parameters():
                     param.requires_grad = True
-                
-            for block in model.transformer_blocks_copy:
-                for param in block.parameters():
-                    param.requires_grad = True
-                
-            for param in model.initial_combine_linear.parameters():
-                param.requires_grad = True
-            
-            return model
-        
-        except Exception as e:
-            print(f"Failed to load as DiffusionAsShader: {e}")
-            print("Attempting to load as CogVideoXTransformer3DModel and convert...")
+
+                return model
+            except Exception as e:
+                print(f"Failed to load DaS checkpoint: {e}")
+                raise
+        else:
+            # This is a base CogVideoX checkpoint - convert it
+            print("Loading base CogVideoX model and converting to DiffusionAsShader...")
 
             base_model = CogVideoXTransformer3DModel.from_pretrained(pretrained_model_name_or_path, **kwargs)
             
